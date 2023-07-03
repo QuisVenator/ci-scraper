@@ -20,10 +20,10 @@ import (
 
 var (
 	// This is an approximation of the range of ci available (starting point was manually tested)
-	// startingCI = 6956795
-	// endingCI   = 300000
-	startingCI = 5708234
-	endingCI   = 5708334
+	startingCI = 6956795
+	endingCI   = 300000
+	// startingCI = 5708334
+	// endingCI   = 5708234
 
 	// Other constants for scraping
 	targetURL    = "https://santipresidente.com/padron-nacional.php"
@@ -33,6 +33,9 @@ var (
 
 	// Used for ui
 	progress progressbar.Progress
+
+	// Channel for stopping the scraper
+	stopChan chan struct{}
 )
 
 func main() {
@@ -47,18 +50,33 @@ func main() {
 	writer = csv.NewWriter(file)
 	defer writer.Flush()
 
+	// Prepare stop channel
+	stopChan = make(chan struct{})
+
 	// Prepare tview app
 	app := tview.NewApplication()
 	textView := tview.NewTextView().
+		SetDynamicColors(true).
 		SetChangedFunc(func() {
 			app.Draw()
 		})
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyRune {
+			switch event.Rune() {
+			case 'q':
+				stopChan <- struct{}{}
+				app.Stop()
+			}
+		}
+		return event
+	})
 
 	textView.SetBorder(true)
 	textView.SetBackgroundColor(tcell.ColorDefault)
 
 	progress = progressbar.Progress{TextView: textView}
-	progress.Init(startingCI-endingCI, 50, "Scraper Progress: ")
+	progress.Init(startingCI-endingCI, 50, "Scraper Progress (press q to stop): ")
 
 	// Scrape all
 	go scrape()
@@ -70,22 +88,18 @@ func main() {
 }
 
 func scrape() {
-	fmt.Println("Starting scrape...")
 	for ci := startingCI; ci >= endingCI; ci-- {
 		var body []byte
 		for retries := 0; retries < 3; retries++ {
 			resp, err := http.PostForm(targetURL, url.Values{"ci": {fmt.Sprint(ci)}})
 			if err != nil {
-				fmt.Printf("Error making POST request: %v\n", err)
-				fmt.Println("Retrying in 1 second...")
+				progress.ErrorChan <- err
 				time.Sleep(1 * time.Second)
 				continue
 			}
 			body, err = ioutil.ReadAll(resp.Body)
 			if err != nil {
-				fmt.Printf("Error reading response body: %v\n", err)
-				resp.Body.Close()
-				fmt.Println("Retrying in 1 second...")
+				progress.ErrorChan <- err
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -99,7 +113,7 @@ func scrape() {
 			if matches != nil {
 				data := []string{}
 				for _, match := range matches {
-					data = append(data, strings.TrimSuffix(match[1], "\n"))
+					data = append(data, match[1])
 				}
 				// Writing the matched data to the CSV file
 				err := writer.Write(data)
@@ -111,5 +125,13 @@ func scrape() {
 
 		// Update UI
 		progress.ProgChan <- 1
+
+		// If stop signal is received, stop scraping
+		select {
+		case <-stopChan:
+			return
+		default:
+			// Do nothing
+		}
 	}
 }

@@ -48,7 +48,7 @@ func (p *Progress) Init(full, limit int, prompt string) chan int {
 				strings.Repeat("■", x),
 				strings.Repeat("□", limit-x),
 				progress, full)
-			fmt.Printf("\nError count: [red]%d[white]\n", errors)
+			fmt.Fprintf(p.TextView, "\nError count: [red]%d[white]\n", errors)
 		}
 	}()
 
