@@ -22,7 +22,7 @@ import (
 var (
 	// This is an approximation of the range of ci available (starting point was manually tested)
 	startingCI = 5708234
-	endingCI   = 5708000
+	endingCI   = 5708234
 	// startingCI = 5708334
 	// endingCI   = 5708234
 
@@ -83,7 +83,7 @@ func main() {
 	textView.SetBackgroundColor(tcell.ColorDefault)
 
 	progress = progressbar.Progress{TextView: textView}
-	progress.Init(startingCI-endingCI, 50, "Scraper Progress (press q to stop): ")
+	progress.Init(startingCI-endingCI+1, 50, "Scraper Progress (press q to stop): ")
 
 	// Scrape all
 	go scrape()
