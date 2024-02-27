@@ -1,16 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
@@ -20,15 +21,14 @@ import (
 
 var (
 	// This is an approximation of the range of ci available (starting point was manually tested)
-	startingCI = 6956795
-	endingCI   = 300000
+	startingCI = 5708234
+	endingCI   = 5708000
 	// startingCI = 5708334
 	// endingCI   = 5708234
 
 	// Other constants for scraping
-	targetURL    = "https://santipresidente.com/padron-nacional.php"
-	notFoundText = `<p class="fs-lg text-primary pb-lg-1 mb-4">El Número de CI <strong>9999999</strong> no fue encontrado</p>`
-	re           = regexp.MustCompile(`<span class="text-dark fw-semibold me-1">(.*?)</span>`)
+	targetURL    = "https://servicios.ips.gov.py/constancias_aop/controladores/funcionesConstanciasAsegurados.php?opcion=consultarAsegurado"
+	notFoundText = `El Nro de CIC no existe en la base de datos local de la Policía`
 	writer       *csv.Writer
 
 	// Used for ui
@@ -37,6 +37,13 @@ var (
 	// Channel for stopping the scraper
 	stopChan chan struct{}
 )
+
+type Data struct {
+	CI          string
+	Name        string
+	Nationality string
+	Status      string
+}
 
 func main() {
 	// Prepare CSV writer
@@ -91,7 +98,7 @@ func scrape() {
 	for ci := startingCI; ci >= endingCI; ci-- {
 		var body []byte
 		for retries := 0; retries < 3; retries++ {
-			resp, err := http.PostForm(targetURL, url.Values{"ci": {fmt.Sprint(ci)}})
+			resp, err := http.PostForm(targetURL, url.Values{"parmDocOrigen": {"226"}, "parmCedula": {fmt.Sprintf("%d", ci)}})
 			if err != nil {
 				progress.ErrorChan <- err
 				time.Sleep(1 * time.Second)
@@ -108,23 +115,34 @@ func scrape() {
 		}
 
 		html := string(body)
-		if !strings.Contains(html, notFoundText) {
-			matches := re.FindAllStringSubmatch(html, -1)
-			if matches != nil {
-				data := []string{}
-				for _, match := range matches {
-					data = append(data, match[1])
-				}
-				// Writing the matched data to the CSV file
-				err := writer.Write(data)
-				if err != nil {
-					progress.ErrorChan <- err
-				}
+		if strings.Contains(html, notFoundText) {
+			// fmt.Printf("CI %d not found\n", ci)
+		} else {
+			// Use goquery to parse the html
+			doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(html))
+			if err != nil {
+				progress.ErrorChan <- err
+			} else {
+				// Initialize a Data instance
+				var data Data
+
+				// Extract each field based on its ID
+				data.CI = strings.TrimSpace(doc.Find("#varCedula").AttrOr("value", ""))
+				data.Name = strings.TrimSpace(doc.Find("#varNombre").AttrOr("value", ""))
+				data.Nationality = strings.TrimSpace(doc.Find("#varNacionalidad").AttrOr("value", ""))
+				data.Status = strings.TrimSpace(doc.Find("#varEstado").AttrOr("value", ""))
+
+				// Write to CSV
+				writer.Write([]string{data.CI, data.Name, data.Nationality, data.Status})
 			}
 		}
 
 		// Update UI
 		progress.ProgChan <- 1
+
+		// // DEBUG code
+		// time.Sleep(10 * time.Millisecond)
+		// progress.ProgChan <- 1
 
 		// If stop signal is received, stop scraping
 		select {
@@ -134,4 +152,5 @@ func scrape() {
 			// Do nothing
 		}
 	}
+	<-stopChan
 }
