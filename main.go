@@ -22,14 +22,15 @@ import (
 var (
 	// This is an approximation of the range of ci available (starting point was manually tested)
 	startingCI = 5708234
-	endingCI   = 5708234
+	endingCI   = 5708000
 	// startingCI = 5708334
 	// endingCI   = 5708234
 
 	// Other constants for scraping
 	targetURL    = "https://servicios.ips.gov.py/constancias_aop/controladores/funcionesConstanciasAsegurados.php?opcion=consultarAsegurado"
-	notFoundText = `El Nro de CIC no existe en la base de datos local de la Policía`
-	writer       *csv.Writer
+	notFoundText = `El Nro de CIC no existe en la base de datos local de la`
+	writerRes    *csv.Writer
+	writerNf     *csv.Writer
 
 	// Used for ui
 	progress progressbar.Progress
@@ -47,15 +48,23 @@ type Data struct {
 
 func main() {
 	// Prepare CSV writer
-	file, err := os.Create("results.csv")
+	fileRes, err := os.Create("results.csv")
 	if err != nil {
 		fmt.Printf("Error creating CSV file: %v\n", err)
 		return
 	}
-	defer file.Close()
+	defer fileRes.Close()
 
-	writer = csv.NewWriter(file)
-	defer writer.Flush()
+	writerRes = csv.NewWriter(fileRes)
+
+	filenf, err := os.Create("notfound.csv")
+	if err != nil {
+		fmt.Printf("Error creating CSV file: %v\n", err)
+		return
+	}
+	defer filenf.Close()
+
+	writerNf = csv.NewWriter(filenf)
 
 	// Prepare stop channel
 	stopChan = make(chan struct{})
@@ -116,12 +125,16 @@ func scrape() {
 
 		html := string(body)
 		if strings.Contains(html, notFoundText) {
-			// fmt.Printf("CI %d not found\n", ci)
+			progress.NotFoundChan <- struct{}{}
+			writerNf.Write([]string{fmt.Sprintf("%d", ci)})
+			writerNf.Flush()
+			continue
 		} else {
 			// Use goquery to parse the html
 			doc, err := goquery.NewDocumentFromReader(bytes.NewBufferString(html))
 			if err != nil {
 				progress.ErrorChan <- err
+				continue
 			} else {
 				// Initialize a Data instance
 				var data Data
@@ -133,7 +146,8 @@ func scrape() {
 				data.Status = strings.TrimSpace(doc.Find("#varEstado").AttrOr("value", ""))
 
 				// Write to CSV
-				writer.Write([]string{data.CI, data.Name, data.Nationality, data.Status})
+				writerRes.Write([]string{data.CI, data.Name, data.Nationality, data.Status})
+				writerRes.Flush()
 			}
 		}
 
